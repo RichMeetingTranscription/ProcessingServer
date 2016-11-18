@@ -39,21 +39,14 @@ class ServerWebsocket(WebSocketClient):
     STATE_CANCELLING = 8
     STATE_FINISHED = 100
 
-    def __init__(self, uri, decoder_pipeline, post_processor, full_post_processor=None):
+    def __init__(self, uri, decoder_pipeline):
         self.uri = uri
         self.decoder_pipeline = decoder_pipeline
         self.post_processor = post_processor
         self.full_post_processor = full_post_processor
         WebSocketClient.__init__(self, url=uri, heartbeat_freq=10)
         self.pipeline_initialized = False
-        self.partial_transcript = ""
-        if USE_NNET2:
-            self.decoder_pipeline.set_result_handler(self._on_result)
-            self.decoder_pipeline.set_full_result_handler(self._on_full_result)
-            self.decoder_pipeline.set_error_handler(self._on_error)
-        else:
-            self.decoder_pipeline.set_word_handler(self._on_word)
-            self.decoder_pipeline.set_error_handler(self._on_error)
+
         self.decoder_pipeline.set_eos_handler(self._on_eos)
         self.state = self.STATE_CREATED
         self.last_decoder_message = time.time()
@@ -84,7 +77,7 @@ class ServerWebsocket(WebSocketClient):
             time.sleep(1)
 
 
-    def received_message(self, m):
+    def received_message(self, m): #reviewing
         logger.debug("%s: Got message from server of type %s" % (self.request_id, str(type(m))))
         if self.state == self.__class__.STATE_CONNECTED:
             props = json.loads(str(m))
@@ -124,7 +117,7 @@ class ServerWebsocket(WebSocketClient):
                 logger.info("%s: Ignoring data, worker already in state %d" % (self.request_id, self.state))
 
 
-    def finish_request(self):
+    def finish_request(self): #done (...)
         if self.state == self.STATE_CONNECTED:
             # connection closed when we are not doing anything
             self.decoder_pipeline.finish_request()
@@ -154,108 +147,41 @@ class ServerWebsocket(WebSocketClient):
             logger.info("%s: Finished waiting for EOS" % self.request_id)
 
 
-    def closed(self, code, reason=None):
+    def closed(self, code, reason=None): #done
         logger.debug("%s: Websocket closed() called" % self.request_id)
         self.finish_request()
         logger.debug("%s: Websocket closed() finished" % self.request_id)
 
-    def _on_result(self, result, final):
-        if final:
-            # final results are handled by _on_full_result()
-            return
-        self.last_decoder_message = time.time()
-        if self.last_partial_result == result:
-            return
-        self.last_partial_result = result
-        logger.info("%s: Postprocessing (final=%s) result.."  % (self.request_id, final))
-        if final:
-            logger.info("%s: Before postprocessing: %s" % (self.request_id, result))
-        processed_transcript = self.post_process(result)
-        logger.info("%s: Postprocessing done." % self.request_id)
-        if final:
-            logger.info("%s: After postprocessing: %s" % (self.request_id, processed_transcript))
-
-        event = dict(status=common.STATUS_SUCCESS,
-                     segment=self.num_segments,
-                     result=dict(hypotheses=[dict(transcript=processed_transcript)], final=final))
-        try:
-            self.send(json.dumps(event))
-        except:
-            e = sys.exc_info()[1]
-            logger.warning("Failed to send event to master: %s" % e)
-
-    def _on_full_result(self, full_result_json):
-        self.last_decoder_message = time.time()
-        full_result = json.loads(full_result_json)
-        full_result['segment'] = self.num_segments
-        if full_result.get("status", -1) == common.STATUS_SUCCESS:
-            #logger.info("%s: Postprocessing (final=%s) result.."  % (self.request_id, final))
-            logger.debug("%s: Before postprocessing: %s" % (self.request_id, full_result))
-            full_result = self.post_process_full(full_result)
-            logger.info("%s: Postprocessing done." % self.request_id)
-            logger.debug("%s: After postprocessing: %s" % (self.request_id, full_result))
 
 
-            try:
-                self.send(json.dumps(full_result))
-            except:
-                e = sys.exc_info()[1]
-                logger.warning("Failed to send event to master: %s" % e)
-            if full_result.get("result", {}).get("final", True):
-                self.num_segments += 1
-                self.last_partial_result = ""
-        else:
-            logger.info("%s: Result status is %d, forwarding the result to the server anyway" % (self.request_id, full_result.get("status", -1)))
-            try:
-                self.send(json.dumps(full_result))
-            except:
-                e = sys.exc_info()[1]
-                logger.warning("Failed to send event to master: %s" % e)
-
-
-    def _on_word(self, word):
+    def _on_word(self, word): #done
         self.last_decoder_message = time.time()
         if word != "<#s>":
             if len(self.partial_transcript) > 0:
                 self.partial_transcript += " "
             self.partial_transcript += word
-            logger.debug("%s: Postprocessing partial result.."  % self.request_id)
-            processed_transcript = self.post_process(self.partial_transcript)
-            logger.debug("%s: Postprocessing done." % self.request_id)
 
             event = dict(status=common.STATUS_SUCCESS,
                          segment=self.num_segments,
-                         result=dict(hypotheses=[dict(transcript=processed_transcript)], final=False))
+                         result=dict(hypotheses=[dict(transcript=partial_transcript)], final=False))
             self.send(json.dumps(event))
         else:
-            logger.info("%s: Postprocessing final result.."  % self.request_id)
-            processed_transcript = self.post_process(self.partial_transcript)
-            logger.info("%s: Postprocessing done." % self.request_id)
             event = dict(status=common.STATUS_SUCCESS,
                          segment=self.num_segments,
-                         result=dict(hypotheses=[dict(transcript=processed_transcript)], final=True))
+                         result=dict(hypotheses=[dict(transcript=partial_transcript)], final=True))
             self.send(json.dumps(event))
             self.partial_transcript = ""
             self.num_segments += 1
 
 
-    def _on_eos(self, data=None):
+    def _on_eos(self, data=None): #done (called when stream is over)
         self.last_decoder_message = time.time()
         self.state = self.STATE_FINISHED
         self.send_adaptation_state()
         self.close()
 
-    def _on_error(self, error):
-        self.state = self.STATE_FINISHED
-        event = dict(status=common.STATUS_NOT_ALLOWED, message=error)
-        try:
-            self.send(json.dumps(event))
-        except:
-            e = sys.exc_info()[1]
-            logger.warning("Failed to send event to master: %s" % e)
-        self.close()
 
-    def send_adaptation_state(self):
+    def send_adaptation_state(self): #done (should be useful...)
         if hasattr(self.decoder_pipeline, 'get_adaptation_state'):
             logger.info("%s: Sending adaptation state to client..." % (self.request_id))
             adaptation_state = self.decoder_pipeline.get_adaptation_state()
@@ -270,38 +196,7 @@ class ServerWebsocket(WebSocketClient):
                 e = sys.exc_info()[1]
                 logger.warning("Failed to send event to master: " + str(e))
         else:
-            logger.info("%s: Adaptation state not supported by the decoder, not sending it." % (self.request_id))    
-
-
-    def post_process(self, text):
-        if self.post_processor:
-            self.post_processor.stdin.write("%s\n" % text)
-            self.post_processor.stdin.flush()
-            text = self.post_processor.stdout.readline()
-            text = text.strip()
-            text = text.replace("\\n", "\n")
-            return text
-        else:
-            return text
-
-    def post_process_full(self, full_result):
-        if self.full_post_processor:
-            self.full_post_processor.stdin.write("%s\n\n" % json.dumps(full_result))
-            self.full_post_processor.stdin.flush()
-            lines = []
-            while True:
-                l = self.full_post_processor.stdout.readline()
-                if not l: break # EOF
-                if l.strip() == "":
-                    break
-                lines.append(l)
-            full_result = json.loads("".join(lines))
-
-        elif self.post_processor:
-            for hyp in full_result.get("result", {}).get("hypotheses", []):
-                hyp["original-transcript"] = hyp["transcript"]
-                hyp["transcript"] = self.post_process(hyp["transcript"])
-        return full_result
+            logger.info("%s: Adaptation state not supported by the decoder, not sending it." % (self.request_id))
 
 
 
@@ -322,38 +217,14 @@ def main():
         logging.info("Forking into %d processes" % args.fork)
         tornado.process.fork_processes(args.fork)
 
-    conf = {}
-    if args.conf:
-        with open(args.conf) as f:
-            conf = yaml.safe_load(f)
 
-    if "logging" in conf:
-        logging.config.dictConfig(conf["logging"])
-
-    # fork off the post-processors before we load the model into memory
-    post_processor = None
-    if "post-processor" in conf:
-        post_processor = Popen(conf["post-processor"], shell=True, stdin=PIPE, stdout=PIPE)
-
-    full_post_processor = None
-    if "full-post-processor" in conf:
-        full_post_processor = Popen(conf["full-post-processor"], shell=True, stdin=PIPE, stdout=PIPE)
-
-    global USE_NNET2
-    USE_NNET2 = conf.get("use-nnet2", False)
-
-    global SILENCE_TIMEOUT
-    SILENCE_TIMEOUT = conf.get("silence-timeout", 5)
-    if USE_NNET2:
-        decoder_pipeline = DecoderPipeline2(conf)
-    else:
-        decoder_pipeline = DecoderPipeline(conf)
+    decoder_pipeline = DecoderPipeline()
 
 
     loop = GObject.MainLoop()
     thread.start_new_thread(loop.run, ())
     while True:
-        ws = ServerWebsocket(args.uri, decoder_pipeline, post_processor, full_post_processor=full_post_processor)
+        ws = ServerWebsocket(args.uri, decoder_pipeline)
         try:
             logger.info("Opening websocket connection to master server")
             ws.connect()
@@ -366,4 +237,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
