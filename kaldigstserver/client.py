@@ -44,7 +44,7 @@ class MyClient(WebSocketClient):
         self.send(data, binary=True)
 
     def opened(self):
-        #print "Socket opened!"
+        print "Socket opened!"
         def send_data_to_ws():
             f = open(self.fn, "rb")
             if self.send_adaptation_state_filename is not None:
@@ -56,6 +56,7 @@ class MyClient(WebSocketClient):
                     e = sys.exc_info()[0]
                     print >> sys.stderr, "Failed to send adaptation state: ",  e
             for block in iter(lambda: f.read(self.byterate/4), ""):
+                print "Block sent! size : {} - type : {}".format(len(block), type(block))
                 self.send_data(block)
             print >> sys.stderr, "Audio sent, now sending EOS"
             self.send("EOS")
@@ -65,6 +66,7 @@ class MyClient(WebSocketClient):
 
 
     def received_message(self, m):
+        print "Received message"
         response = json.loads(str(m))
         #print >> sys.stderr, "RESPONSE:", response
         #print >> sys.stderr, "JSON was:", m
@@ -125,4 +127,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

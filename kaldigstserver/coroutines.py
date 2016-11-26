@@ -1,8 +1,7 @@
 #Coroutine of a Ringbuffer
 
 import numpy as np
-from ringBuffer import *
-import sidekit
+#import sidekit
 
 
 def coroutine(func):
@@ -23,6 +22,8 @@ def sink_call(callback):
     try:
         while(True):
             input = yield
+            print ">Sink received {}".format(input)
+            input = "WORD"
             callback(input)
     except GeneratorExit:
         print("Sink callback closed")

@@ -21,7 +21,6 @@ from ws4py.client.threadedclient import WebSocketClient
 import ws4py.messaging
 
 from decoder import DecoderPipeline
-from decoder2 import DecoderPipeline2
 import common
 
 logger = logging.getLogger(__name__)
@@ -39,21 +38,20 @@ class ServerWebsocket(WebSocketClient):
     STATE_CANCELLING = 8
     STATE_FINISHED = 100
 
-    def __init__(self, uri, decoder_pipeline):
+    def __init__(self, uri):
         self.uri = uri
-        self.decoder_pipeline = decoder_pipeline
-        self.post_processor = post_processor
-        self.full_post_processor = full_post_processor
+        self.decoder_pipeline = DecoderPipeline(self._on_word, self._on_eos)
+
         WebSocketClient.__init__(self, url=uri, heartbeat_freq=10)
         self.pipeline_initialized = False
 
-        self.decoder_pipeline.set_eos_handler(self._on_eos)
         self.state = self.STATE_CREATED
         self.last_decoder_message = time.time()
         self.request_id = "<undefined>"
         self.timeout_decoder = 5
         self.num_segments = 0
         self.last_partial_result = ""
+        self.partial_transcript = ""
 
     def opened(self):
         logger.info("Opened websocket connection to server")
@@ -78,13 +76,17 @@ class ServerWebsocket(WebSocketClient):
 
 
     def received_message(self, m): #reviewing
+
+        #print "Received Message {}".format(m)
+        print "Received Message"
+
         logger.debug("%s: Got message from server of type %s" % (self.request_id, str(type(m))))
         if self.state == self.__class__.STATE_CONNECTED:
             props = json.loads(str(m))
             content_type = props['content_type']
             self.request_id = props['id']
             self.num_segments = 0
-            self.decoder_pipeline.init_request(self.request_id, content_type)
+            #self.decoder_pipeline.init_request(self.request_id, content_type)
             self.last_decoder_message = time.time()
             thread.start_new_thread(self.guard_timeout, ())
             logger.info("%s: Started timeout guard" % self.request_id)
@@ -99,6 +101,7 @@ class ServerWebsocket(WebSocketClient):
         else:
             if self.state != self.STATE_CANCELLING and self.state != self.STATE_EOS_RECEIVED and self.state != self.STATE_FINISHED:
                 if isinstance(m, ws4py.messaging.BinaryMessage):
+                    print "Process_data called, size: {}, type: {}".format(len(m.data), type(m.data))
                     self.decoder_pipeline.process_data(m.data)
                     self.state = self.STATE_PROCESSING
                 elif isinstance(m, ws4py.messaging.TextMessage):
@@ -163,12 +166,12 @@ class ServerWebsocket(WebSocketClient):
 
             event = dict(status=common.STATUS_SUCCESS,
                          segment=self.num_segments,
-                         result=dict(hypotheses=[dict(transcript=partial_transcript)], final=False))
+                         result=dict(hypotheses=[dict(transcript=self.partial_transcript)], final=False))
             self.send(json.dumps(event))
-        else:
+        else: #TODO word=<#s> : never called
             event = dict(status=common.STATUS_SUCCESS,
                          segment=self.num_segments,
-                         result=dict(hypotheses=[dict(transcript=partial_transcript)], final=True))
+                         result=dict(hypotheses=[dict(transcript=self.partial_transcript)], final=True))
             self.send(json.dumps(event))
             self.partial_transcript = ""
             self.num_segments += 1
@@ -218,13 +221,12 @@ def main():
         tornado.process.fork_processes(args.fork)
 
 
-    decoder_pipeline = DecoderPipeline()
 
 
     loop = GObject.MainLoop()
     thread.start_new_thread(loop.run, ())
     while True:
-        ws = ServerWebsocket(args.uri, decoder_pipeline)
+        ws = ServerWebsocket(args.uri)
         try:
             logger.info("Opening websocket connection to master server")
             ws.connect()

@@ -3,13 +3,16 @@ Created on May 17, 2013
 
 @author: tanel
 """
+import gi
+gi.require_version('Gst', '1.0')
+from gi.repository import GObject, Gst
 
 GObject.threads_init()
 Gst.init(None)
 import logging
 import thread
-import os*
-from coroutine import *
+import os
+from coroutines import *
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +23,16 @@ class DecoderPipeline(object):
         logger.info("Creating decoder")
         self.word_handler = word_handler
         self.eos_handler = eos_handler
+        self.ringbuffer = None
         self.create_pipeline()
 
     def create_pipeline(self):
         self.sink = sink_call(self.word_handler)
-        self.ringbuffer = ringbuffer(self.sink, 4, 2)
+        self.ringbuffer = ring_buffer(self.sink, 4, 2)
 
 
     def process_data(self, data):
-        logger.debug('%s: Pushing buffer of size %d to pipeline' % (self.request_id, len(data)))
+        logger.debug('%s: Pushing buffer of size %d to pipeline' % ("No ID", len(data)))
         self.ringbuffer.send(data)
 
 
@@ -39,7 +43,7 @@ class DecoderPipeline(object):
 
     def finish_request(self):
         logger.info("finish_request called")
-        end_request()
+        self.end_request()
     def cancel(self):
         logger.info("cancel called")
-        end_request()
+        self.end_request()
