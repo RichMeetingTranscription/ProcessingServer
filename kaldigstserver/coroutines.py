@@ -22,8 +22,8 @@ def sink_call(callback):
     try:
         while(True):
             input = yield
-            print ">Sink received {}".format(input)
-            input = "WORD"
+            #print ">Sink received {}".format(input)
+            input = "+1 sample from ring buffer\n"
             callback(input)
     except GeneratorExit:
         print("Sink callback closed")

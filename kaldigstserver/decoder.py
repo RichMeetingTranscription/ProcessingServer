@@ -28,7 +28,7 @@ class DecoderPipeline(object):
 
     def create_pipeline(self):
         self.sink = sink_call(self.word_handler)
-        self.ringbuffer = ring_buffer(self.sink, 4, 2)
+        self.ringbuffer = ring_buffer(self.sink, 32000, 0)
 
 
     def process_data(self, data):
@@ -44,6 +44,7 @@ class DecoderPipeline(object):
     def finish_request(self):
         logger.info("finish_request called")
         self.end_request()
+
     def cancel(self):
         logger.info("cancel called")
         self.end_request()

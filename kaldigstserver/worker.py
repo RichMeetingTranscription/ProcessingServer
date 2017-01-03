@@ -88,11 +88,11 @@ class ServerWebsocket(WebSocketClient):
             self.num_segments = 0
             #self.decoder_pipeline.init_request(self.request_id, content_type)
             self.last_decoder_message = time.time()
-            thread.start_new_thread(self.guard_timeout, ())
+            #thread.start_new_thread(self.guard_timeout, ())
             logger.info("%s: Started timeout guard" % self.request_id)
             logger.info("%s: Initialized request" % self.request_id)
             self.state = self.STATE_INITIALIZED
-        elif m.data == "EOS":
+        elif m.data == "EOS":  #end of file indication
             if self.state != self.STATE_CANCELLING and self.state != self.STATE_EOS_RECEIVED and self.state != self.STATE_FINISHED:
                 self.decoder_pipeline.end_request()
                 self.state = self.STATE_EOS_RECEIVED
@@ -104,23 +104,11 @@ class ServerWebsocket(WebSocketClient):
                     print "Process_data called, size: {}, type: {}".format(len(m.data), type(m.data))
                     self.decoder_pipeline.process_data(m.data)
                     self.state = self.STATE_PROCESSING
-                elif isinstance(m, ws4py.messaging.TextMessage):
-                    props = json.loads(str(m))
-                    if 'adaptation_state' in props:
-                        as_props = props['adaptation_state']
-                        if as_props.get('type', "") == "string+gzip+base64":
-                            adaptation_state = zlib.decompress(base64.b64decode(as_props.get('value', '')))
-                            logger.info("%s: Setting adaptation state to user-provided value" % (self.request_id))
-                            self.decoder_pipeline.set_adaptation_state(adaptation_state)
-                        else:
-                            logger.warning("%s: Cannot handle adaptation state type " % (self.request_id, as_props.get('type', "")))
-                    else:
-                        logger.warning("%s: Got JSON message but don't know what to do with it" % (self.request_id))
             else:
                 logger.info("%s: Ignoring data, worker already in state %d" % (self.request_id, self.state))
 
 
-    def finish_request(self): #done (...)
+    def finish_request(self):
         if self.state == self.STATE_CONNECTED:
             # connection closed when we are not doing anything
             self.decoder_pipeline.finish_request()
@@ -180,28 +168,7 @@ class ServerWebsocket(WebSocketClient):
     def _on_eos(self, data=None): #done (called when stream is over)
         self.last_decoder_message = time.time()
         self.state = self.STATE_FINISHED
-        self.send_adaptation_state()
         self.close()
-
-
-    def send_adaptation_state(self): #done (should be useful...)
-        if hasattr(self.decoder_pipeline, 'get_adaptation_state'):
-            logger.info("%s: Sending adaptation state to client..." % (self.request_id))
-            adaptation_state = self.decoder_pipeline.get_adaptation_state()
-            event = dict(status=common.STATUS_SUCCESS,
-                         adaptation_state=dict(id=self.request_id,
-                                               value=base64.b64encode(zlib.compress(adaptation_state)),
-                                               type="string+gzip+base64",
-                                               time=time.strftime("%Y-%m-%dT%H:%M:%S")))
-            try:
-                self.send(json.dumps(event))
-            except:
-                e = sys.exc_info()[1]
-                logger.warning("Failed to send event to master: " + str(e))
-        else:
-            logger.info("%s: Adaptation state not supported by the decoder, not sending it." % (self.request_id))
-
-
 
 
 def main():
@@ -223,8 +190,8 @@ def main():
 
 
 
-    loop = GObject.MainLoop()
-    thread.start_new_thread(loop.run, ())
+    #loop = GObject.MainLoop()
+    #thread.start_new_thread(loop.run, ())
     while True:
         ws = ServerWebsocket(args.uri)
         try:
